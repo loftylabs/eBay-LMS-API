@@ -8,4 +8,9 @@ setup(
     author_email='casey@hirelofty.com',
     url='https://github.com/loftylabs/',
     packages=['lmslib'],
+    install_requires=[
+        'lxml',
+        'simplejson',
+        'request',
+    ],
 )
