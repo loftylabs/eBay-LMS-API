@@ -37,7 +37,7 @@ PRODUCTION = 'production'
 SANDBOX = 'sandbox'
 
 
-class LMSCall():
+class LMSCall(object):
     '''
     This is the parent class of all LMS API calls that can be made to the eBay servers.
     This class will be able to connect to the server( sandbox or production), build
@@ -46,19 +46,25 @@ class LMSCall():
     
     _thisdir = os.path.abspath( os.path.dirname( __file__ ) )
     
-    def __init__(self, environment):
+    def __init__(self, environment, *args, **kwargs):
+        if environment not in [SANDBOX, PRODUCTION]:
+            raise Exception("ERROR: environment must either be PRODUCTION or SANDBOX")
+
         self._env = environment
         self._credentials = {}
-        self._generate_env_info()
+        if kwargs.get('config', None) is not None:
+            self._generate_env_info_from_dict(kwargs.pop('config'))
+        else:
+            self._generate_env_info()
         self._headers = {}
         self._generate_headers()
         self._request = ""
         self._response = ""
         
         self._siteconfig = {
-            'site_id'        : 100,
-            'site_host'        : None,
-            'site_location'    : None,
+            'site_id': 100, # TODO:  Find out why this is hardcoded.
+            'site_host': None,
+            'site_location': None,
         
         }
 
@@ -71,14 +77,28 @@ class LMSCall():
             filename = 'credentials.json'
         elif self._env == SANDBOX:
             filename = 'sb_credentials.json'
-        else:
-            print("ERROR: environment must either be PRODUCTION or SANDBOX")
-            sys.exit()
-            
-        fp = open( os.path.join( self._thisdir, filename), mode='r' )
-        self._credentials = simplejson.load( fp )
+
+        fp = open(os.path.join(self._thisdir, filename), mode='r')
+        self._credentials = simplejson.load(fp)
         fp.close()
-    
+
+    def _generate_env_info_from_dict(self, config):
+        '''
+        Retrieves the correct credentials depending on what server environment
+        is given.
+
+        {
+            "developer_key"   : "YOUR PRODUCTION DEVELOPER KEY HERE",
+            "application_key" : "YOUR PRODUCTION APPLICATION KEY HERE",
+            "certificate_key" : "YOUR PRODUCTION CERTIFICATE KEY HERE",
+            "auth_token"      : "YOUR PRODUCTION AUTH TOKEN GOES HERE"
+        }
+
+        '''
+
+        self._credentials = config
+
+
     def _generate_headers(self):
         '''
         Creates the base headers that every request needs
@@ -179,15 +199,16 @@ class LMSCall():
             return self._get_success( *self.args )
         else:
             return self._get_failure()    
-    
-class BulkDataExchangeService( LMSCall ):
+
+
+class BulkDataExchangeService(LMSCall):
     '''
     This class is a wrapper for the LMSCall class that contains information on which
     server to connect to in order to make calls in the BulkDataExchange API
     '''
     
-    def __init__( self, environment ):
-        LMSCall.__init__( self, environment )
+    def __init__(self, environment, *args, **kwargs):
+        super(BulkDataExchangeService, self).__init__(environment, *args, **kwargs)
         
         if environment == PRODUCTION:
             self._siteconfig['site_host'] = 'webservices.ebay.com'
@@ -200,15 +221,15 @@ class BulkDataExchangeService( LMSCall ):
         self._headers['X-EBAY-SOA-SERVICE-NAME'] = 'BulkDataExchangeService'
             
 
-class FileTransferService( LMSCall ):
+class FileTransferService(LMSCall):
     '''
     This class is a wrapper for the LMSCall class that contains information on which 
     server to connect to in order to make calls in the FileTransfer API
     '''
     
-    def __init__( self, environment ):
-        LMSCall.__init__(self, environment )
-        
+    def __init__( self, environment, *args, **kwargs ):
+        super(FileTransferService, self).__init__(environment, *args, **kwargs)
+
         if environment == PRODUCTION:
             self._siteconfig['site_host'] = 'storage.ebay.com'
             self._siteconfig['site_location'] = '/FileTransferService'
@@ -218,6 +239,7 @@ class FileTransferService( LMSCall ):
             self._siteconfig['site_location'] = '/FileTransferService'
         
         self._headers['X-EBAY-SOA-SERVICE-NAME'] = 'FileTransferService'
+
 
 class CreateUploadJob( BulkDataExchangeService ):
     '''
@@ -250,7 +272,8 @@ class CreateUploadJob( BulkDataExchangeService ):
         request += '</createUploadJobRequest>'
         
         self._request = request
-            
+
+
 class UploadFile( FileTransferService ):
     '''
     This class is a wrapper for the FileTransferService class that will build the proper
@@ -403,8 +426,8 @@ class GetJobStatus( BulkDataExchangeService ):
     request string for getJobStatus LMS API call
     '''
     
-    def __init__( self, environment ):
-        BulkDataExchangeService.__init__(self, environment)
+    def __init__( self, environment, *args, **kwargs ):
+        super(GetJobStatus, self).__init__( environment, *args, **kwargs)
         self._headers['X-EBAY-SOA-OPERATION-NAME'] = 'getJobStatus'
         self.args = []
         
@@ -545,14 +568,14 @@ class GetJobs( BulkDataExchangeService ):
         else:
             return self._get_failure()
             
-class DownloadFile( FileTransferService ):
+class DownloadFile(FileTransferService):
     '''
     This class is a wrapper for the FileTransferService class that will build the proper
     request string for a DownloadFile LMS API call.
     '''
         
-    def __init__( self, environment ):
-        FileTransferService.__init__( self, environment )
+    def __init__(self, environment, *args, **kwargs):
+        super(DownloadFile, self).__init__(environment, *args, **kwargs)
     
         self._headers['X-EBAY-SOA-OPERATION-NAME'] = 'downloadFile'
         self._headers['Content-Type'] = 'text/xml'
@@ -594,31 +617,38 @@ class DownloadFile( FileTransferService ):
         into two parts: the xml response part and zipfile part
         '''
         #Find boundary string
-        boundary = self._response.splitlines()[0]
+
+
+        response_as_string = self._response.decode('latin1')
+        boundary = response_as_string.splitlines()[0]
         
         #Find the ending boundary index
-        find = self._response.find( "Content-ID:" )
-        find = self._response.find( '\r\n', find )
+        find = response_as_string.find( "Content-ID:" )
+        find = response_as_string.find( '\r\n', find )
         
         #Find start of middle boundary
-        middle_boundary = self._response.find( boundary, find )
+        middle_boundary = response_as_string.find( boundary, find )
         
         #XML response from downloadFile
-        response = self._response[find:middle_boundary].strip()
+        response = response_as_string[find:middle_boundary].strip()
         
         #Find next boundary
-        find = self._response.find( "Content-ID:", middle_boundary )
-        find = self._response.find( '\r\n', find )
-        find_end = self._response.find( boundary, find )
+        find = response_as_string.find( "Content-ID:", middle_boundary )
+        find = response_as_string.find( '\r\n', find )
+        find_end = response_as_string.find( boundary, find )
         
-        #Extract the compressed data and write it to file
-        data = self._response[find:find_end]
+        #Extract the compressed data
+        data = response_as_string[find:find_end].encode('latin1')
+
+
+
         fp = open( 'data_responses.zip', 'wb' )
-        fp.write( data )
+        fp.write( data)
         fp.close()
         
-        self._response = response
+        self._response = response.encode('latin1')
 
+        self._file_data = data
 
 class StartDownloadJob( BulkDataExchangeService ):
     '''
@@ -626,8 +656,8 @@ class StartDownloadJob( BulkDataExchangeService ):
     that allows us to generate reports about inventory, sales, etc 
     '''
     
-    def __init__( self, environment ):
-        BulkDataExchangeService.__init__(self, environment)
+    def __init__(self, environment, *args, **kwargs):
+        super(StartDownloadJob, self).__init__(environment, *args, **kwargs)
         self._headers['X-EBAY-SOA-OPERATION-NAME'] = 'startDownloadJob'
         self.args = []
         self.allowable_jobtypes = ('ActiveInventoryReport', 'FeeSettlementReport', 'SoldReport')
